@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cadence · Your agent workspace</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="Cadence home"><span class="brand-mark">c</span>cadence<span class="local">LOCAL</span></a>
+    <div class="workspace-label">WORKSPACE</div>
+    <button class="nav-item selected" id="all-projects"><span>▦</span> All projects <span id="total-count" class="count">0</span></button>
+    <div class="section-label"><span>YOUR PROJECTS</span><button id="add-project" class="icon-button" aria-label="Add project">+</button></div>
+    <nav id="projects" aria-label="Projects"></nav>
+    <button class="add-project-link" id="add-project-link">+ Add a project</button>
+    <div class="sidebar-bottom">
+      <div class="account-card"><span class="status-dot" id="account-dot"></span><div><strong id="account-name">Connecting to Codex</strong><p id="account-detail">Checking local sign-in…</p></div><button id="refresh-account" class="icon-button" aria-label="Refresh Codex connection">↻</button></div>
+      <div id="limits" class="limits"></div>
+      <p class="sidebar-note">Your projects. Your Codex sign-in.</p>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb-project">All projects</strong></div><span class="connection" id="connection">● Connected locally</span></header>
+    <section class="page-heading"><div><div class="eyebrow">A LITTLE DIRECTION. REAL PROGRESS.</div><h1 id="page-title">Your work, in motion.</h1><p>Turn the next thing on your list into the next thing shipped.</p></div><button class="primary" id="new-task">+ New task <kbd>N</kbd></button></section>
+    <section class="runner-bar"><div class="runner-status"><span id="runner-indicator" class="runner-indicator">Ⅱ</span><div><strong id="runner-title">Ready when you are</strong><p id="runner-description">Queue a task, then start the runner.</p></div></div><div class="runner-controls"><label for="concurrency">Active agents</label><select id="concurrency"><option value="1">1 at a time</option><option value="2">2 at a time</option><option value="3">3 at a time</option></select><button id="toggle-runner" class="secondary">▶ Start runner</button></div></section>
+    <div class="board-toolbar"><div class="view-label">▦ <strong>Board</strong><span id="task-count">0 tasks</span></div><label class="search"><span>⌕</span><input id="search" placeholder="Search tasks…" aria-label="Search tasks"><kbd>/</kbd></label></div>
+    <div id="board" class="board"></div>
+    <div id="welcome" class="welcome" hidden><div class="welcome-symbol">↗</div><h2>Make room for your next idea.</h2><p>Add a Git repository or create a fresh project.<br>Then give Codex a task worth taking off your plate.</p><button class="secondary" id="welcome-project">+ Add your first project</button><div class="steps"><span>01 <b>Add a project</b></span><span>02 <b>Describe a task</b></span><span>03 <b>Review the result</b></span></div></div>
+    <footer><span>BUILT FOR A STEADY FLOW</span><span>Isolated workspaces <i>·</i> Human review <i>·</i> Powered by Codex</span></footer>
+  </main>
+  <dialog id="project-dialog"><form id="project-form"><div class="dialog-heading"><div><span class="eyebrow">YOUR WORKSPACE</span><h2>Add a project</h2></div><button type="button" class="close icon-button" aria-label="Close">×</button></div><label>Project name<input name="name" required maxlength="100" placeholder="My next big thing"></label><label>Git repository path <span class="optional">optional</span><input name="path" placeholder="/Users/you/Projects/my-app"></label><p class="form-note">Use an existing local Git repository with at least one commit, or leave the path empty to create a new project. Runs start from committed code.</p><div class="form-error" role="alert"></div><button type="submit" class="primary">Add project ↗</button></form></dialog>
+  <dialog id="task-dialog"><form id="task-form"><div class="dialog-heading"><div><span class="eyebrow">SET SOMETHING IN MOTION</span><h2>New task</h2></div><button type="button" class="close icon-button" aria-label="Close">×</button></div><label>Project<select id="task-project" name="projectId" required></select></label><label>What needs to happen?<input name="title" required maxlength="200" placeholder="Add a dark theme"></label><label>Details & acceptance criteria<textarea name="description" rows="5" placeholder="Describe the outcome, constraints, and how to verify it."></textarea></label><label>Model<select id="task-model" name="model"><option value="">Codex default</option></select></label><p class="form-note">Tasks start in Backlog. Move one to Todo when it’s ready for an agent.</p><div class="form-error" role="alert"></div><button type="submit" class="primary">Create task ↗</button></form></dialog>
+  <dialog id="detail-dialog" class="detail-dialog"><div id="detail"></div></dialog>
+  <div id="toast" role="status" hidden></div>
+</body></html>
