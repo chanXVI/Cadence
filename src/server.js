@@ -10,6 +10,9 @@ const codex = new Codex();
 const harness = new Harness(
   process.env.HARNESS_DATA_DIR || path.join(base, ".harness"),
   codex,
+  process.env.CADENCE_PROJECTS_DIR
+    ? { projectsDirectory: process.env.CADENCE_PROJECTS_DIR }
+    : {},
 );
 const clients = new Set();
 let revision = 0,
@@ -119,6 +122,9 @@ const server = http.createServer(async (req, res) => {
         await harness.action(action[1], input.action);
         return json(res, 200, {});
       }
+      const publish = route.match(/^\/api\/tasks\/([\w-]+)\/publish$/);
+      if (publish)
+        return json(res, 200, await harness.publish(publish[1]));
       const approval = route.match(/^\/api\/requests\/([\w-]+)$/);
       if (approval) {
         harness.answer(approval[1], input);

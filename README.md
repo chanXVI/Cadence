@@ -36,12 +36,12 @@ For server development, use `npm run dev` to restart Node when files change. Ref
 
 ## Run your first task
 
-1. Select **Add a project**. Enter the root path of a local Git repository with at least one commit, or leave the path blank to create a fresh repository.
-2. Select **New task**, choose the project, and enter a title and acceptance criteria. Select a model or keep **Codex default**.
+1. Select **Add a project**. Choose an existing local Git repository with at least one commit, or choose a location where Cadence should create a fresh primary repository.
+2. Select **New task**, choose the project, and enter a title, a short workspace context, and acceptance criteria. Select a model or keep **Codex default**.
 3. Open the task in **Backlog** and select **Move to Todo**.
 4. Select **Start runner**. The runner starts paused by default. Choose between one and three concurrent tasks with **Active agents**.
 5. Open the running task to follow agent output and activity. Answer questions or allow/decline supported approval requests there.
-6. When the task reaches **Review**, select **View changes** and inspect the workspace path shown in the task. Run the project's checks there, then select **Mark done** when satisfied.
+6. When the task reaches **Review**, select **View changes** and inspect the workspace path shown in the task. Run the project's checks there, then select **Publish local branch** to make the result available in the primary repository. Publishing does not merge or push. Select **Mark done** when satisfied.
 
 For a simple manual trial, create a fresh project and use:
 
@@ -54,10 +54,11 @@ The generated app lives in the task's workspace. Cadence does not automatically 
 - Five board columns: **Backlog**, **Todo**, **In Progress**, **Review**, and **Done**.
 - Project filtering, task search, model selection, and keyboard shortcuts: `N` for a new task and `/` for search.
 - A local queue with one to three concurrent tasks, queue pause/resume, and individual run interruption.
-- A separate Git clone and `cadence/task-<number>` branch for each task.
+- A separate, descriptively named Git clone and `cadence/<context>--cd-<number>` branch for each task.
 - Live browser updates through Server-Sent Events, including agent output, command activity, changed-file activity, and token usage when reported.
 - Command, file-change, and permission approval requests, plus text responses to agent questions.
 - A review view with tracked-file diffs against the starting commit and a list of untracked files.
+- Explicit local publishing that commits reviewed workspace changes and fetches the task branch into the primary repository without checking it out, merging, or pushing.
 - Manual reruns using the existing task workspace and a new Codex thread.
 - Local JSON persistence for projects, tasks, settings, and bounded output/activity history.
 - A loopback-only HTTP server with same-origin checks and a Content Security Policy.
@@ -68,13 +69,23 @@ New tasks start in Backlog. Queued tasks run in creation order when capacity is 
 
 **Pause queue** prevents new tasks from starting; active tasks continue. Use **Stop run** inside a task to interrupt it. Tasks waiting for approval or input still occupy a concurrency slot.
 
-A completed Codex turn moves the task to Review. This means the agent finished its turn; it does not certify that tests passed. **Mark done** updates the board status only. The harness does not merge, push, or publish the result.
+A completed Codex turn moves the task to Review. This means the agent finished its turn; it does not certify that tests passed. **Mark done** updates the board status only and warns when the result has not been published locally.
+
+**Publish local branch** stages and commits the reviewed workspace changes, including new files, and fetches the task branch into the project's primary local repository. It does not change the checked-out branch, merge, or contact a remote. GitHub and other hosted remotes are not required. If the destination branch cannot be updated safely, Git rejects the fetch and the committed result remains in the task workspace.
 
 Every server start pauses the queue. Previously active tasks become failed and require manual review and requeueing. A Codex disconnection also pauses the queue and fails active tasks. Task startup errors pause dispatch; a later failed agent turn marks that task failed without necessarily pausing the queue.
 
 ### Workspace behavior
 
-The first run clones the project's committed Git state. Uncommitted changes and untracked files in the source project are not copied. Each task works in its own clone; results are not automatically applied to the source repository or shared with other tasks.
+The first run clones the project's committed Git state. Uncommitted changes and untracked files in the source project are not copied. Each task works in its own clone; results are not automatically applied to the primary repository or shared with other tasks.
+
+New projects are created at the user-facing location chosen in the project form, outside Cadence's internal data directory. UUIDs remain internal identifiers. New task workspaces use a readable project and task context, for example:
+
+```text
+.harness/workspaces/inventory-service--7fd21c4a/fix-session--CD-0042/
+```
+
+The corresponding task branch is `cadence/fix-session--cd-0042`. Existing UUID-named workspaces remain valid and continue to be reused.
 
 Rerunning a task retains its workspace changes and original comparison commit. It starts a new Codex conversation with the same title and description, rather than resuming the previous conversation or refreshing from the source repository.
 
@@ -86,12 +97,13 @@ Codex is started with the `workspace-write` sandbox and `on-request` approval po
 | --- | --- | --- |
 | `PORT` | `4310` | HTTP port; the server binds to `127.0.0.1`. |
 | `CODEX_BIN` | `codex` | Codex executable name or path. |
-| `HARNESS_DATA_DIR` | `.harness` in this repository | Persistent state and managed repositories/workspaces. |
+| `HARNESS_DATA_DIR` | `.harness` in this repository | Persistent state and isolated task workspaces. |
+| `CADENCE_PROJECTS_DIR` | `~/Projects/Cadence` | Suggested parent directory for newly created primary repositories. |
 
 Example:
 
 ```sh
-PORT=4311 CODEX_BIN=/absolute/path/to/codex npm start
+PORT=4311 CODEX_BIN=/absolute/path/to/codex CADENCE_PROJECTS_DIR=/absolute/project/parent npm start
 ```
 
 Default data layout:
@@ -99,11 +111,12 @@ Default data layout:
 ```text
 .harness/
   state.json                 Projects, tasks, settings, and run history
-  projects/<project-id>/     Repositories created with a blank project path
-  workspaces/<task-id>/      Task clones and generated work
+  workspaces/
+    <project-slug>--<short-id>/
+      <task-context>--CD-<number>/   Task clones and generated work
 ```
 
-`.harness/` is ignored by Git. It contains project files and task output, so preserve it if you want to retain your work. Pending approval requests are held in memory and do not survive a server restart.
+`.harness/` is ignored by Git. It contains task workspaces and output, so preserve it until wanted results have been published locally. Primary repositories created by Cadence live at their chosen project locations. Pending approval requests are held in memory and do not survive a server restart.
 
 ## Source layout
 
@@ -118,11 +131,10 @@ public/style.css   Layout and styling
 
 ## Validation and current limitations
 
-JavaScript syntax checks passed during the initial implementation. A complete browser flow and a real agent task have not yet been verified. The manual trial above is the next validation step.
-
-The `npm test` script invokes Node's test runner, but no automated tests have been added yet. To repeat the syntax checks:
+The automated tests cover readable slugs, project creation outside internal storage, untracked-file review, and publishing a task result to a local branch. A complete browser flow and a real agent task have not yet been verified. Run the test suite and syntax checks with:
 
 ```sh
+npm test
 node --check src/codex.js
 node --check src/harness.js
 node --check src/server.js

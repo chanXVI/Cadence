@@ -7,6 +7,20 @@ const esc = (value) =>
         c
       ],
   );
+const slugify = (value, maxWords = 3, fallback = "task") => {
+  const words = String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .match(/[a-z0-9]+/g) || [];
+  const meaningful = words.filter(
+    (word) => !["a", "an", "and", "for", "of", "the", "to"].includes(word),
+  );
+  return (meaningful.length ? meaningful : words)
+    .slice(0, maxWords)
+    .join("-") || fallback;
+};
+const displayNumber = (number) => String(number).padStart(4, "0");
 let state = {
     projects: [],
     tasks: [],
@@ -54,9 +68,28 @@ function toast(message) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => ($("#toast").hidden = true), 5000);
 }
+function suggestedProjectPath() {
+  const base = state.projectsDirectory;
+  if (!base) return "";
+  return `${base.replace(/[\\/]$/, "")}/${slugify($("#project-name").value, 6, "my-project")}`;
+}
+function updateProjectForm() {
+  const create = $("#project-mode").value === "create",
+    pathInput = $("#project-path");
+  $("#project-path-label").textContent = create
+    ? "New project location"
+    : "Existing repository location";
+  $("#project-note").textContent = create
+    ? "Cadence creates the primary Git repository at this location. Task work remains isolated in separate clones."
+    : "Choose the root folder of a local Git repository with at least one commit.";
+  if (pathInput.dataset.auto === "true")
+    pathInput.value = create ? suggestedProjectPath() : "";
+}
 function showProject() {
   $("#project-form").reset();
   $("#project-form .form-error").textContent = "";
+  $("#project-path").dataset.auto = "true";
+  updateProjectForm();
   $("#project-dialog").showModal();
 }
 async function showTask() {
@@ -66,6 +99,7 @@ async function showTask() {
   }
   $("#task-form").reset();
   $("#task-form .form-error").textContent = "";
+  $("#task-context").dataset.auto = "true";
   $("#task-project").innerHTML = state.projects
     .map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`)
     .join("");
@@ -140,7 +174,7 @@ function render() {
             todo: "Queued",
             backlog: "Draft",
           }[t.status];
-          return `<button class="task-card" data-task="${t.id}"><div class="task-id">CD-${String(t.number).padStart(3, "0")}</div><h3>${esc(t.title)}</h3><div class="card-bottom"><span class="project-tag">${esc(project?.name)}</span><span class="${["failed", "blocked"].includes(t.status) ? "error-tag" : ""}">${label}</span></div></button>`;
+          return `<button class="task-card" data-task="${t.id}"><div class="task-id">CD-${displayNumber(t.number)}</div><h3>${esc(t.title)}</h3><div class="card-bottom"><span class="project-tag">${esc(project?.name)}</span><span class="${["failed", "blocked"].includes(t.status) ? "error-tag" : ""}">${label}</span></div></button>`;
         })
         .join(
           "",
@@ -159,6 +193,8 @@ function renderDetail(force = false) {
     task.status,
     task.error,
     task.workspace,
+    task.branch,
+    task.publishedCommit,
     requests.map((r) => r.id),
   ]);
   if (force || $("#detail").dataset.signature !== signature) {
@@ -170,8 +206,20 @@ function renderDetail(force = false) {
         : task.status === "todo"
           ? '<button data-action="backlog">Return to backlog</button>'
           : '<button class="primary" data-action="queue">Move to Todo →</button>';
+    const publish =
+      task.workspace && ["review", "done"].includes(task.status)
+        ? `<button data-publish>${task.publishedCommit ? "Update local branch" : "Publish local branch"}</button>`
+        : "";
+    const publication = task.publishedCommit
+      ? `<br>Published locally: <code>${esc(task.publishedBranch)}</code> at <code>${esc(task.publishedCommit.slice(0, 10))}</code>`
+      : task.workspace
+        ? "<br>Published locally: not yet"
+        : "";
+    const publishNote = publish
+      ? '<div class="form-note">Publishing commits the reviewed workspace changes and creates or updates this branch in the primary local repository. It does not check out, merge, or push the branch.</div>'
+      : "";
     $("#detail").innerHTML =
-      `<div class="dialog-heading"><div><span class="eyebrow">CD-${String(task.number).padStart(3, "0")} · ${esc(task.status.toUpperCase())}</span><h2>${esc(task.title)}</h2></div><button class="close icon-button" aria-label="Close">×</button></div><p class="detail-description">${esc(task.description || "No additional details.")}</p>${task.error ? `<div class="error-message">${esc(task.error)}</div>` : ""}<div class="detail-meta">${esc(state.projects.find((p) => p.id === task.projectId)?.name)} · ${esc(task.model || "Codex default model")}${task.workspace ? `<br>Workspace: <code>${esc(task.workspace)}</code><br>Branch: <code>cadence/task-${task.number}</code>` : ""}</div><div class="detail-actions">${actions}${task.workspace ? "<button data-diff>View changes</button>" : ""}</div><div id="approvals">${requests.map(requestHTML).join("")}</div><div class="detail-section"><h3>Agent output <span id="token-count"></span></h3><pre class="output" id="agent-output"></pre></div><div id="diff-section" class="detail-section" hidden><h3>Changes from the starting commit</h3><pre class="output" id="diff-output"></pre></div><div class="detail-section"><h3>Activity</h3><div id="activity"></div></div>`;
+      `<div class="dialog-heading"><div><span class="eyebrow">CD-${displayNumber(task.number)} · ${esc(task.status.toUpperCase())}</span><h2>${esc(task.title)}</h2></div><button class="close icon-button" aria-label="Close">×</button></div><p class="detail-description">${esc(task.description || "No additional details.")}</p>${task.error ? `<div class="error-message">${esc(task.error)}</div>` : ""}<div class="detail-meta">${esc(state.projects.find((p) => p.id === task.projectId)?.name)} · ${esc(task.model || "Codex default model")}${task.workspace ? `<br>Workspace: <code>${esc(task.workspace)}</code><br>Branch: <code>${esc(task.branch || `cadence/task-${task.number}`)}</code>` : ""}${publication}</div><div class="detail-actions">${actions}${publish}${task.workspace ? "<button data-diff>View changes</button>" : ""}</div>${publishNote}<div id="approvals">${requests.map(requestHTML).join("")}</div><div class="detail-section"><h3>Agent output <span id="token-count"></span></h3><pre class="output" id="agent-output"></pre></div><div id="diff-section" class="detail-section" hidden><h3>Changes from the starting commit</h3><pre class="output" id="diff-output"></pre></div><div class="detail-section"><h3>Activity</h3><div id="activity"></div></div>`;
   }
   $("#agent-output").textContent =
     task.output || "Agent updates will appear here when the task runs.";
@@ -254,6 +302,22 @@ document.addEventListener("click", async (event) => {
       $("#detail-dialog").showModal();
       return;
     }
+    const task = state.tasks.find((item) => item.id === selectedTask);
+    if (
+      button.dataset.action === "done" &&
+      !task?.publishedCommit &&
+      !confirm(
+        "Mark this task done without publishing its result to the primary local repository?",
+      )
+    )
+      return;
+    if (
+      button.hasAttribute("data-publish") &&
+      !confirm(
+        "Commit the reviewed workspace changes and create or update its branch in the primary local repository? Nothing will be merged or pushed.",
+      )
+    )
+      return;
     button.disabled = true;
     if (button.id === "toggle-runner")
       await api("settings", { paused: !state.paused });
@@ -261,6 +325,12 @@ document.addEventListener("click", async (event) => {
       await api(`tasks/${selectedTask}/action`, {
         action: button.dataset.action,
       });
+    if (button.hasAttribute("data-publish")) {
+      const result = await api(`tasks/${selectedTask}/publish`, {});
+      state = await api("state");
+      renderDetail(true);
+      toast(`Published ${result.branch} locally.`);
+    }
     if (button.hasAttribute("data-diff")) {
       const taskId = selectedTask,
         result = await api(`tasks/${taskId}/diff`);
@@ -268,9 +338,11 @@ document.addEventListener("click", async (event) => {
         $("#diff-section").hidden = false;
         $("#diff-output").textContent =
           (result.diff || "No tracked changes.") +
-          (result.untracked
-            ? "\n\nNew files (inspect in the workspace):\n" + result.untracked
-            : "");
+          (result.untrackedDiff
+            ? "\n\nNew files:\n" + result.untrackedDiff
+            : result.untracked
+              ? "\n\nNew files (inspect in the workspace):\n" + result.untracked
+              : "");
       }
     }
     if (button.dataset.decision || button.hasAttribute("data-answer")) {
@@ -326,6 +398,23 @@ $("#concurrency").addEventListener("change", async (event) => {
   } catch (error) {
     toast(error.message);
   }
+});
+$("#project-mode").addEventListener("change", () => {
+  $("#project-path").dataset.auto = "true";
+  updateProjectForm();
+});
+$("#project-name").addEventListener("input", () => {
+  if ($("#project-path").dataset.auto === "true") updateProjectForm();
+});
+$("#project-path").addEventListener("input", (event) => {
+  event.target.dataset.auto = "false";
+});
+$("#task-title").addEventListener("input", (event) => {
+  if ($("#task-context").dataset.auto === "true")
+    $("#task-context").value = slugify(event.target.value);
+});
+$("#task-context").addEventListener("input", (event) => {
+  event.target.dataset.auto = "false";
 });
 $("#search").addEventListener("input", render);
 document.addEventListener("keydown", (event) => {

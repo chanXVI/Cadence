@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
@@ -6,6 +7,7 @@ import {
   realpathSync,
 } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -20,11 +22,32 @@ export const active = (task) =>
   ["starting", "running", "blocked", "stopping"].includes(task.status);
 const clean = (value, max) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
+const stopWords = new Set(["a", "an", "and", "for", "of", "the", "to"]);
+export const slugify = (value, maxWords = 6, fallback = "project") => {
+  const words = clean(value, 200)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .match(/[a-z0-9]+/g) || [];
+  const meaningful = words.filter((word) => !stopWords.has(word));
+  return (meaningful.length ? meaningful : words)
+    .slice(0, maxWords)
+    .join("-")
+    .slice(0, 60) || fallback;
+};
+const taskNumber = (number) => String(number).padStart(4, "0");
+const taskBranch = (task) =>
+  `cadence/${task.slug}--cd-${taskNumber(task.number)}`;
+const projectDirectory = (project) =>
+  `${project.slug}--${project.id.replaceAll("-", "").slice(0, 8)}`;
 
 export class Harness extends EventEmitter {
-  constructor(root, codex) {
+  constructor(root, codex, options = {}) {
     super();
     this.root = path.resolve(root);
+    this.projectsDirectory = path.resolve(
+      options.projectsDirectory || path.join(os.homedir(), "Projects", "Cadence"),
+    );
     this.codex = codex;
     this.requests = new Map();
     this.dispatching = false;
@@ -35,7 +58,20 @@ export class Harness extends EventEmitter {
       this.state = JSON.parse(readFileSync(this.file, "utf8"));
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
-      this.state = { projects: [], tasks: [], concurrency: 1, paused: true };
+      this.state = {
+        version: 2,
+        projects: [],
+        tasks: [],
+        concurrency: 1,
+        paused: true,
+      };
+    }
+    this.state.version = 2;
+    for (const project of this.state.projects)
+      project.slug ||= slugify(project.name);
+    for (const task of this.state.tasks) {
+      task.slug ||= slugify(task.title, 3, "task");
+      if (!task.workspace) task.branch ||= taskBranch(task);
     }
     this.state.paused = true;
     for (const task of this.state.tasks)
@@ -66,7 +102,11 @@ export class Harness extends EventEmitter {
     this.emit("change");
   }
   snapshot() {
-    return { ...this.state, requests: [...this.requests.values()] };
+    return {
+      ...this.state,
+      projectsDirectory: this.projectsDirectory,
+      requests: [...this.requests.values()],
+    };
   }
   task(id) {
     const task = this.state.tasks.find((t) => t.id === id);
@@ -77,8 +117,17 @@ export class Harness extends EventEmitter {
     let repo;
     const name = clean(input.name, 100);
     if (!name) throw new Error("Give the project a name.");
-    if (input.path) {
-      repo = realpathSync(clean(input.path, 2000));
+    const id = randomUUID(),
+      slug = slugify(name),
+      mode = clean(input.mode, 20),
+      suppliedPath = clean(input.path, 2000),
+      useExisting = mode === "existing" || (!mode && suppliedPath);
+    if (mode && !["create", "existing"].includes(mode))
+      throw new Error("Choose whether to create a project or use an existing one.");
+    if (useExisting) {
+      if (!suppliedPath)
+        throw new Error("Choose the existing Git repository folder.");
+      repo = realpathSync(suppliedPath);
       const top = (
         await git(repo, "rev-parse", "--show-toplevel")
       ).stdout.trim();
@@ -86,8 +135,22 @@ export class Harness extends EventEmitter {
         throw new Error("Choose the root folder of a Git repository.");
       await git(repo, "rev-parse", "--verify", "HEAD");
     } else {
-      repo = path.join(this.root, "projects", randomUUID());
-      mkdirSync(repo, { recursive: true });
+      repo = path.resolve(suppliedPath || path.join(this.projectsDirectory, slug));
+      const relativeToData = path.relative(this.root, repo);
+      if (
+        relativeToData === "" ||
+        (!relativeToData.startsWith(`..${path.sep}`) &&
+          relativeToData !== ".." &&
+          !path.isAbsolute(relativeToData))
+      )
+        throw new Error(
+          "Create the primary project outside Cadence's internal data directory.",
+        );
+      if (existsSync(repo))
+        throw new Error(
+          "That project location already exists. Choose a new empty location.",
+        );
+      mkdirSync(repo, { recursive: true, mode: 0o700 });
       await git(repo, "init", "-b", "main");
       writeFileSync(
         path.join(repo, "README.md"),
@@ -105,14 +168,15 @@ export class Harness extends EventEmitter {
         "Initialize project",
       );
     }
-    const project = { id: randomUUID(), name, path: repo };
+    const project = { id, name, slug, path: repo, managed: !useExisting };
     this.state.projects.push(project);
     this.save();
     return project;
   }
   addTask(input) {
     const title = clean(input.title, 200),
-      description = clean(input.description, 16000);
+      description = clean(input.description, 16000),
+      slug = slugify(input.context || title, 3, "task");
     if (!title) throw new Error("Give the task a title.");
     if (!this.state.projects.some((p) => p.id === input.projectId))
       throw new Error("Choose a project.");
@@ -120,6 +184,7 @@ export class Harness extends EventEmitter {
       id: randomUUID(),
       number: this.state.tasks.length + 1,
       title,
+      slug,
       description,
       projectId: input.projectId,
       status: "backlog",
@@ -128,6 +193,7 @@ export class Harness extends EventEmitter {
       events: [],
       attempt: 0,
     };
+    task.branch = taskBranch(task);
     this.state.tasks.push(task);
     this.save();
     return task;
@@ -212,7 +278,16 @@ export class Harness extends EventEmitter {
       );
     const project = this.state.projects.find((p) => p.id === task.projectId);
     if (!task.workspace) {
-      const workspace = path.join(this.root, "workspaces", task.id);
+      task.slug ||= slugify(task.title, 3, "task");
+      task.branch ||= taskBranch(task);
+      let workspace = path.join(
+        this.root,
+        "workspaces",
+        projectDirectory(project),
+        `${task.slug}--CD-${taskNumber(task.number)}`,
+      );
+      if (existsSync(workspace))
+        workspace += `--${task.id.replaceAll("-", "").slice(0, 8)}`;
       mkdirSync(path.dirname(workspace), { recursive: true });
       await exec(
         "git",
@@ -220,7 +295,7 @@ export class Harness extends EventEmitter {
         { timeout: 30000 },
       );
       task.workspace = workspace;
-      await git(workspace, "checkout", "-b", `cadence/task-${task.number}`);
+      await git(workspace, "checkout", "-b", task.branch);
       task.baseCommit = (
         await git(workspace, "rev-parse", "HEAD")
       ).stdout.trim();
@@ -404,12 +479,87 @@ export class Harness extends EventEmitter {
   }
   async diff(id) {
     const task = this.task(id);
-    if (!task.workspace) return { diff: "", untracked: "" };
+    if (!task.workspace)
+      return { diff: "", untracked: "", untrackedDiff: "" };
     const [{ stdout: diff }, { stdout: untracked }] = await Promise.all([
       git(task.workspace, "diff", task.baseCommit, "--"),
       git(task.workspace, "ls-files", "--others", "--exclude-standard"),
     ]);
-    return { diff, untracked };
+    const untrackedDiffs = [];
+    for (const file of untracked.trim().split("\n").filter(Boolean)) {
+      try {
+        await git(task.workspace, "diff", "--no-index", "--", "/dev/null", file);
+      } catch (error) {
+        if (error.code !== 1) throw error;
+        untrackedDiffs.push(error.stdout || `New file: ${file}\n`);
+      }
+      if (untrackedDiffs.join("").length > 200000) break;
+    }
+    return {
+      diff: diff.slice(0, 200000),
+      untracked,
+      untrackedDiff: untrackedDiffs.join("\n").slice(0, 200000),
+    };
+  }
+  async publish(id) {
+    const task = this.task(id);
+    if (active(task))
+      throw new Error("Stop the current run before publishing its result.");
+    if (!task.workspace || !task.baseCommit)
+      throw new Error("Run this task before publishing its result.");
+    if (!["review", "done"].includes(task.status))
+      throw new Error("Review the task result before publishing it.");
+    const project = this.state.projects.find((p) => p.id === task.projectId);
+    if (!project) throw new Error("The task project no longer exists.");
+    const branch = (
+      await git(task.workspace, "branch", "--show-current")
+    ).stdout.trim();
+    if (!branch) throw new Error("The task workspace is not on a branch.");
+    if (task.branch && task.branch !== branch)
+      throw new Error(
+        `The task workspace is on ${branch}, but ${task.branch} was expected.`,
+      );
+    task.branch ||= branch;
+    const status = (await git(task.workspace, "status", "--porcelain")).stdout;
+    if (status) {
+      await git(task.workspace, "add", "-A");
+      await git(
+        task.workspace,
+        "-c",
+        "user.name=Cadence",
+        "-c",
+        "user.email=cadence@localhost",
+        "commit",
+        "-m",
+        `CD-${taskNumber(task.number)}: ${task.title}`,
+      );
+    }
+    const commit = (await git(task.workspace, "rev-parse", "HEAD")).stdout.trim();
+    if (commit === task.baseCommit)
+      throw new Error("There are no task changes to publish.");
+    try {
+      await git(
+        project.path,
+        "fetch",
+        "--no-tags",
+        task.workspace,
+        `${branch}:refs/heads/${branch}`,
+      );
+    } catch (error) {
+      throw new Error(
+        `The workspace commit was created, but the local branch could not be updated: ${clean(error.stderr, 2000) || error.message}`,
+      );
+    }
+    task.publishedAt = new Date().toISOString();
+    task.publishedBranch = branch;
+    task.publishedCommit = commit;
+    this.log(
+      task,
+      "system",
+      `Published ${commit.slice(0, 10)} to local branch ${branch}.`,
+    );
+    this.save();
+    return { branch, commit, projectPath: project.path };
   }
   close() {
     this.closed = true;

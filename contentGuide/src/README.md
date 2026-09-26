@@ -28,13 +28,14 @@ flowchart LR
 `Harness` owns persistent state, queue scheduling, isolated task workspaces, and Codex run lifecycle.
 
 - Loads and atomically saves projects, tasks, concurrency, and pause state in `state.json`.
-- Creates a Git repository for a new project or validates an existing repository root.
+- Creates a Git repository at a user-chosen, primary project location or validates an existing repository root.
 - Creates tasks in `backlog`, then dispatches queued (`todo`) tasks up to the configured concurrency.
-- Clones each project into a task-specific workspace and creates a `cadence/task-N` branch.
+- Clones each project into a readable, task-specific workspace and creates a `cadence/<context>--cd-N` branch.
 - Starts a Codex thread and turn for each run, forwarding the task title and description.
 - Converts Codex notifications into output, activity logs, diffs, token usage, and task status.
 - Holds approval and question requests in memory, then returns browser answers to Codex.
-- Computes review data from the Git diff against the task's original base commit plus untracked files.
+- Computes review data from the Git diff against the task's original base commit plus untracked-file diffs.
+- On explicit confirmation, commits the reviewed workspace and fetches its branch into the primary local repository without checking it out, merging, or pushing.
 
 ```mermaid
 stateDiagram-v2
